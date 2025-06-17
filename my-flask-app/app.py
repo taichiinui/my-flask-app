@@ -1,8 +1,13 @@
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, redirect, url_for, session
 from bs4 import BeautifulSoup
 import requests
 
 app = Flask(__name__)
+app.secret_key = 'hkZgYMiopV5sG*A4JgHS*T&j'  # セッション用のキー（適当な文字列に変更）
+
+# ログイン用設定
+USERNAME = "ppcuser"
+PASSWORD = "hkZgYMiopV5sG*A4JgHS*T&j"
 
 # WordPress設定
 WP_URL = "https://nrc-formula.com"
@@ -44,7 +49,7 @@ def process_html_and_replace_images(html_content):
         old_src = img.get("src")
         if not old_src:
             continue
-        if old_src.startswith("data:"):  # base64の画像はスキップ
+        if old_src.startswith("data:"):
             print(f"[スキップ] インライン画像: {old_src[:30]}...")
             continue
         print(f"変換対象画像: {old_src}")
@@ -52,13 +57,11 @@ def process_html_and_replace_images(html_content):
             new_src = upload_image_to_wordpress(old_src)
             print(f"→ WordPressにアップされた新画像URL: {new_src}")
             img["src"] = new_src
-            # ✅ data-src属性も削除（元画像のURLが残らないように）
             if "data-src" in img.attrs:
                 del img["data-src"]
         except Exception as e:
             print(f"[エラー] {old_src} の画像アップロードに失敗: {e}")
     return str(soup)
-
 
 def strip_url_parameters_from_links_only(html):
     soup = BeautifulSoup(html, "html.parser")
@@ -86,8 +89,31 @@ def post_to_wordpress(title, html_body):
     response.raise_for_status()
     return response.json()["link"]
 
+# ログイン画面
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        user = request.form['username']
+        pw = request.form['password']
+        if user == USERNAME and pw == PASSWORD:
+            session['logged_in'] = True
+            return redirect(url_for('index'))
+        else:
+            return render_template('login.html', error="ログイン失敗")
+    return render_template('login.html')
+
+# ログアウト
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
+
+# メイン画面
 @app.route('/', methods=['GET', 'POST'])
 def index():
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+
     if request.method == 'POST':
         uploaded_file = request.files['htmlfile']
         rewrite_links = request.form.get("rewrite_links") == "on"
@@ -97,21 +123,17 @@ def index():
         if uploaded_file.filename.endswith('.html'):
             html_content = uploaded_file.read().decode('utf-8')
 
-            # ✅ 優先：外部リンクにすべて置き換え（指定URL）
             if rewrite_links and external_link:
                 html_content = rewrite_all_links(html_content, external_link)
-            # ✅ 次点：?以降の削除（リンクのみ、画像は無視）
             elif strip_params:
                 html_content = strip_url_parameters_from_links_only(html_content)
 
-            # ✅ 画像差し替え
             new_html = process_html_and_replace_images(html_content)
-
-            # ✅ 投稿
             post_url = post_to_wordpress("アップロード記事", new_html)
             return f"<h2>投稿成功！</h2><a href='{post_url}' target='_blank'>{post_url}</a>"
         else:
             return "HTMLファイル（.html）を選択してください。"
+
     return render_template('index.html')
 
 if __name__ == "__main__":
