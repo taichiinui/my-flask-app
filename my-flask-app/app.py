@@ -45,7 +45,7 @@ def upload_image_to_wordpress(image_url):
     response.raise_for_status()
     return response.json()["source_url"]
 
-def process_html_and_replace_images(html_content):
+def process_html_and_replace_images(html_content, remove_srcset):
     soup = BeautifulSoup(html_content, "html.parser")
     for img in soup.find_all("img"):
         old_src = img.get("src")
@@ -61,6 +61,8 @@ def process_html_and_replace_images(html_content):
             img["src"] = new_src
             if "data-src" in img.attrs:
                 del img["data-src"]
+            if remove_srcset and "srcset" in img.attrs:
+                del img["srcset"]
         except Exception as e:
             print(f"[エラー] {old_src} の画像アップロードに失敗: {e}")
     return str(soup)
@@ -92,14 +94,14 @@ def post_to_wordpress(title, html_body):
     return response.json()["link"]
 
 # 非同期実行関数
-def long_task(html_content, rewrite_links, external_link, strip_params):
+def long_task(html_content, rewrite_links, external_link, strip_params, remove_srcset):
     try:
         if rewrite_links and external_link:
             html_content = rewrite_all_links(html_content, external_link)
         elif strip_params:
             html_content = strip_url_parameters_from_links_only(html_content)
 
-        new_html = process_html_and_replace_images(html_content)
+        new_html = process_html_and_replace_images(html_content, remove_srcset)
         post_url = post_to_wordpress("アップロード記事", new_html)
         print(f"[完了] 投稿成功: {post_url}")
     except Exception as e:
@@ -135,10 +137,11 @@ def index():
         rewrite_links = request.form.get("rewrite_links") == "on"
         external_link = request.form.get("external_link", "").strip()
         strip_params = request.form.get("strip_url_params") == "on"
+        remove_srcset = request.form.get("remove_srcset") == "on"
 
         if uploaded_file.filename.endswith('.html'):
             html_content = uploaded_file.read().decode('utf-8')
-            thread = threading.Thread(target=long_task, args=(html_content, rewrite_links, external_link, strip_params))
+            thread = threading.Thread(target=long_task, args=(html_content, rewrite_links, external_link, strip_params, remove_srcset))
             thread.start()
             return "<h2>アップロードを受け付けました。<br>数分後に完了します。</h2>"
         else:
