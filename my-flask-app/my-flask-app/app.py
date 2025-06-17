@@ -1,9 +1,11 @@
 from flask import Flask, request, render_template, redirect, url_for, session
 from bs4 import BeautifulSoup
 import requests
+import threading
+import os
 
 app = Flask(__name__)
-app.secret_key = 'hkZgYMiopV5sG*A4JgHS*T&j'  # セッション用のキー（適当な文字列に変更）
+app.secret_key = 'hkZgYMiopV5sG*A4JgHS*T&j'  # セッション用のキー
 
 # ログイン用設定
 USERNAME = "ppcuser"
@@ -89,6 +91,20 @@ def post_to_wordpress(title, html_body):
     response.raise_for_status()
     return response.json()["link"]
 
+# 非同期実行関数
+def long_task(html_content, rewrite_links, external_link, strip_params):
+    try:
+        if rewrite_links and external_link:
+            html_content = rewrite_all_links(html_content, external_link)
+        elif strip_params:
+            html_content = strip_url_parameters_from_links_only(html_content)
+
+        new_html = process_html_and_replace_images(html_content)
+        post_url = post_to_wordpress("アップロード記事", new_html)
+        print(f"[完了] 投稿成功: {post_url}")
+    except Exception as e:
+        print(f"[エラー] 非同期処理中の例外: {e}")
+
 # ログイン画面
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -122,23 +138,15 @@ def index():
 
         if uploaded_file.filename.endswith('.html'):
             html_content = uploaded_file.read().decode('utf-8')
-
-            if rewrite_links and external_link:
-                html_content = rewrite_all_links(html_content, external_link)
-            elif strip_params:
-                html_content = strip_url_parameters_from_links_only(html_content)
-
-            new_html = process_html_and_replace_images(html_content)
-            post_url = post_to_wordpress("アップロード記事", new_html)
-            return f"<h2>投稿成功！</h2><a href='{post_url}' target='_blank'>{post_url}</a>"
+            thread = threading.Thread(target=long_task, args=(html_content, rewrite_links, external_link, strip_params))
+            thread.start()
+            return "<h2>アップロードを受け付けました。<br>数分後に完了します。</h2>"
         else:
             return "HTMLファイル（.html）を選択してください。"
 
     return render_template('index.html')
 
-import os
-
+# ポート設定（Render用）
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
